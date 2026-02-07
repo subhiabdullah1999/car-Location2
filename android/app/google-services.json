@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "328478976294",
+    "project_id": "car-location-67e15",
+    "storage_bucket": "car-location-67e15.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:328478976294:android:32be8e14761d3e0af339e7",
+        "android_client_info": {
+          "package_name": "com.example.car_location"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyClZumqMNC6PdvhS3tuFrEBtIN21_oy2HE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
