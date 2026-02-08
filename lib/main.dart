@@ -1,54 +1,25 @@
+import 'package:car_location/ui/admin_page.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:auto_start_flutter/auto_start_flutter.dart' as AutoStartFlutter;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 
-// استيراد الملفات (تأكد من مطابقة المسارات لمجلدات مشروعك)
-import 'ui/admin_page.dart';
 import 'services/car_security_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
   FirebaseDatabase.instance.databaseURL = "https://car-location-67e15-default-rtdb.firebaseio.com/";
-
   await requestPermissions(); 
-
-  runApp(const MaterialApp(
-    debugShowCheckedModeBanner: false,
-    home: SplashScreen(),
-  ));
+  runApp(const MaterialApp(debugShowCheckedModeBanner: false, home: SplashScreen()));
 }
 
 Future<void> requestPermissions() async {
-  await [
-    Permission.location,
-    Permission.notification,
-    Permission.ignoreBatteryOptimizations,
-    Permission.sensors,
-    Permission.phone,
-  ].request();
-
-  SharedPreferences prefs = await SharedPreferences.getInstance();
-  bool isAutoStartRequested = prefs.getBool('auto_start_requested') ?? false;
-
-  if (!isAutoStartRequested) {
-    try {
-      bool? isAutoStartAvailable = await AutoStartFlutter.isAutoStartAvailable;
-      if (isAutoStartAvailable == true) {
-        await prefs.setBool('auto_start_requested', true);
-        await AutoStartFlutter.getAutoStartPermission();
-      }
-    } catch (e) {
-      debugPrint("خطأ في التشغيل التلقائي: $e");
-    }
-  }
+  await [Permission.location, Permission.phone, Permission.sensors, Permission.ignoreBatteryOptimizations, Permission.notification].request();
 }
 
-// --- شاشة السبلاش (SplashScreen) ---
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
   @override
@@ -56,26 +27,27 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
+  double _opacity = 0.0; double _scale = 0.5;
   @override
   void initState() {
     super.initState();
-    Timer(const Duration(milliseconds: 3500), () {
-      if (mounted) {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const AppTypeSelector()));
-      }
-    });
+    Future.delayed(const Duration(milliseconds: 500), () => setState(() { _opacity = 1.0; _scale = 1.0; }));
+    Timer(const Duration(milliseconds: 3500), () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const AppTypeSelector())));
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF1A1A1A),
-      body: Center(child: Image.asset('assets/images/logohasba.png', width: 250)),
+      body: Center(
+        child: AnimatedScale(
+          scale: _scale, duration: const Duration(milliseconds: 1500), curve: Curves.elasticOut,
+          child: AnimatedOpacity(opacity: _opacity, duration: const Duration(milliseconds: 1000), child: Image.asset('assets/images/logohasba.png', width: 250)),
+        ),
+      ),
     );
   }
 }
 
-// --- شاشة اختيار نوع التطبيق (AppTypeSelector) ---
 class AppTypeSelector extends StatefulWidget {
   const AppTypeSelector({super.key});
   @override
@@ -85,9 +57,9 @@ class AppTypeSelector extends StatefulWidget {
 class _AppTypeSelectorState extends State<AppTypeSelector> {
   final TextEditingController _idController = TextEditingController();
 
-  void _saveAndNavigate(Widget target) async {
+  void _saveIDAndGo(Widget target) async {
     if (_idController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("يرجى إدخال رقم هاتف السيارة أولاً")));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("يرجى إدخال معرف السيارة")));
       return;
     }
     SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -98,52 +70,34 @@ class _AppTypeSelectorState extends State<AppTypeSelector> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SingleChildScrollView(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 30),
-          height: MediaQuery.of(context).size.height,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.security_update_good, size: 80, color: Color(0xFF0D47A1)),
-              const Text("HASBA TRKAR", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 40),
-              TextField(
-                controller: _idController,
-                keyboardType: TextInputType.phone,
-                decoration: InputDecoration(
-                  labelText: "رقم هاتف السيارة (المعرف)",
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
-                  prefixIcon: const Icon(Icons.phone),
-                ),
-              ),
-              const SizedBox(height: 30),
-              _selectionButton("أنا الأدمن (تتبع وتحكم)", Icons.admin_panel_settings, const Color(0xFF0D47A1), const AdminPage()),
-              const SizedBox(height: 15),
-              _selectionButton("جهاز السيارة (مراقب)", Icons.directions_car, Colors.blueGrey[800]!, const CarAppDevice()),
-            ],
-          ),
+      body: Padding(
+        padding: const EdgeInsets.all(30),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.directions_car_filled, size: 80, color: Colors.blue),
+            const Text("HASBA TRKAR", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 40),
+            TextField(controller: _idController, decoration: InputDecoration(labelText: "معرف السيارة (رقم الهاتف)", border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)))),
+            const SizedBox(height: 20),
+            _buildSelectorBtn("لوحة التحكم (الأدمن)", Icons.admin_panel_settings, Colors.blue.shade800, () => _saveIDAndGo(const AdminPage())),
+            const SizedBox(height: 15),
+            _buildSelectorBtn("جهاز السيارة (المراقب)", Icons.vibration, Colors.grey.shade900, () => _saveIDAndGo(const CarAppDevice())),
+          ],
         ),
       ),
     );
   }
 
-  Widget _selectionButton(String title, IconData icon, Color color, Widget target) {
+  Widget _buildSelectorBtn(String t, IconData i, Color c, VoidCallback p) {
     return ElevatedButton.icon(
-      icon: Icon(icon),
-      label: Text(title),
-      style: ElevatedButton.styleFrom(
-        minimumSize: const Size(double.infinity, 60),
-        backgroundColor: color,
-        foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-      ),
-      onPressed: () => _saveAndNavigate(target),
+      icon: Icon(i, color: Colors.white), label: Text(t, style: const TextStyle(color: Colors.white, fontSize: 16)),
+      style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 65), backgroundColor: c, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15))),
+      onPressed: p,
     );
   }
 }
 
-// --- شاشة جهاز السيارة (CarAppDevice) ---
 class CarAppDevice extends StatefulWidget {
   const CarAppDevice({super.key});
   @override
@@ -152,60 +106,28 @@ class CarAppDevice extends StatefulWidget {
 
 class _CarAppDeviceState extends State<CarAppDevice> {
   final CarSecurityService _service = CarSecurityService();
-  final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
-  StreamSubscription? _commandSub;
-  String? _carID;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadIDAndListen();
-  }
-
-  void _loadIDAndListen() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    _carID = prefs.getString('car_id');
-    if (_carID != null) {
-      _commandSub = _dbRef.child('devices/$_carID/commands').onValue.listen((event) async {
-        if (event.snapshot.value != null) {
-          final data = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
-          final int cmdId = data['id'] ?? 0;
-          if (cmdId == 1) await _service.sendLocationReport();
-          if (cmdId == 2) await _service.sendBatteryReport();
-          if (cmdId == 3) _service.respondStatus("الجهاز متصل ومستعد");
-        }
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    bool active = _service.isSystemActive;
     return Scaffold(
-      appBar: AppBar(title: Text("وحدة السيارة ($_carID)"), centerTitle: true),
+      appBar: AppBar(title: const Text("وضع مراقبة السيارة")),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.verified_user, size: 120, color: _service.isSystemActive ? Colors.green : Colors.grey),
-            const SizedBox(height: 30),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: _service.isSystemActive ? Colors.red : Colors.green, padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20)),
-              onPressed: () {
-                setState(() {
-                  _service.isSystemActive ? _service.stopSecuritySystem() : _service.initSecuritySystem();
-                });
-              },
-              child: Text(_service.isSystemActive ? "إيقاف الحماية" : "تفعيل الحماية الآن", style: const TextStyle(color: Colors.white)),
+            Icon(active ? Icons.shield : Icons.shield_outlined, size: 120, color: active ? Colors.green : Colors.red),
+            const SizedBox(height: 20),
+            Text(active ? "النظام يعمل في الخلفية" : "النظام متوقف", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 40),
+            ElevatedButton.icon(
+              icon: Icon(active ? Icons.stop_circle : Icons.play_circle_fill, color: Colors.white),
+              label: Text(active ? "إيقاف الحماية" : "تفعيل الحماية", style: const TextStyle(color: Colors.white)),
+              style: ElevatedButton.styleFrom(backgroundColor: active ? Colors.red : Colors.green, padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20)),
+              onPressed: () => setState(() { active ? _service.stopSecuritySystem() : _service.initSecuritySystem(); }),
             ),
           ],
         ),
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _commandSub?.cancel();
-    super.dispose();
   }
 }
