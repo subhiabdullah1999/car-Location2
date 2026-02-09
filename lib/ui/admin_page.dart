@@ -29,13 +29,31 @@ class _AdminPageState extends State<AdminPage> {
     _loadData();
   }
 
-  void _setupNotifs() async {
+ void _setupNotifs() async {
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-    await _notif.initialize(const InitializationSettings(android: androidInit));
-    const channel = AndroidNotificationChannel('high_channel', 'Alerts', importance: Importance.max, playSound: true);
-    await _notif.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(channel);
-  }
+    await _notif.initialize(
+      const InitializationSettings(android: androidInit),
+      // هذا الجزء يضمن التفاعل مع الإشعار عند الضغط عليه
+      onDidReceiveNotificationResponse: (details) {
+        // يمكن إضافة منطق هنا لفتح الخريطة فوراً عند الضغط على الإشعار
+      },
+    );
 
+    // إنشاء القناة بأعلى درجات الأولوية لضمان الظهور المنبثق
+    const channel = AndroidNotificationChannel(
+      'high_channel', 
+      'تنبيهات الطوارئ',
+      description: 'إشعارات حماية السيارة المتقدمة',
+      importance: Importance.max, // ضروري جداً للظهور المنبثق
+      playSound: true,
+      enableVibration: true,
+      showBadge: true,
+    );
+
+    await _notif
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+  }
   void _loadData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     _carID = prefs.getString('car_id');
@@ -64,34 +82,64 @@ class _AdminPageState extends State<AdminPage> {
     });
   }
 
-  void _handleResponse(Map d) async {
+ void _handleResponse(Map d) async {
     String type = d['type'] ?? '';
-    // صوت التنبيه
+    String msg = d['message'] ?? '';
+
+    // 1. تشغيل الصوت (تأكد من وجود الملفات في assets/sounds/)
     await _audioPlayer.stop();
     await _audioPlayer.play(AssetSource(type == 'alert' ? 'sounds/alarm.mp3' : 'sounds/notification.mp3'));
 
-    // الإشعار المنبثق العلوي
-    const android = AndroidNotificationDetails('high_channel', 'Alerts', importance: Importance.max, priority: Priority.high);
-    await _notif.show(0, "تنبيه HASBA", d['message'], const NotificationDetails(android: android));
+    // 2. إعداد تفاصيل الإشعار المنبثق (Heads-up Notification)
+    final androidDetails = AndroidNotificationDetails(
+      'high_channel', 
+      'تنبيهات الطوارئ',
+      channelDescription: 'تنبيهات حماية السيارة',
+      importance: Importance.max,
+      priority: Priority.high,
+      ticker: 'ticker',
+      playSound: true,
+      // جعل الإشعار يظهر حتى لو كانت الشاشة مقفلة في بعض الإصدارات
+      fullScreenIntent: true, 
+    );
 
-    // النافذة التفاعلية داخل التطبيق
+    final notificationDetails = NotificationDetails(android: androidDetails);
+
+    // 3. إظهار الإشعار
+    await _notif.show(
+      DateTime.now().millisecond, // معرف فريد لكل إشعار ليظهروا تباعاً
+      type == 'alert' ? "🚨 تنبيه أمني خطير" : "ℹ️ تحديث من السيارة",
+      msg,
+      notificationDetails,
+    );
+
+    // 4. النافذة التفاعلية (Dialog) تظل موجودة كما هي في كودك
     if (mounted) {
-      showDialog(
-        context: context,
-        builder: (c) => AlertDialog(
-          title: Text(type == 'alert' ? "🚨 تحذير أمني" : "ℹ️ إشعار"),
-          content: Text(d['message']),
-          actions: [
-            if (type == 'location') ElevatedButton.icon(
-              icon: const Icon(Icons.location_on),
-              label: const Text("فتح في خرائط جوجل"),
-              onPressed: () => launchUrl(Uri.parse("https://www.google.com/maps/search/?api=1&query=${d['lat']},${d['lng']}"), mode: LaunchMode.externalApplication),
-            ),
-            TextButton(onPressed: () => Navigator.pop(c), child: const Text("إغلاق")),
-          ],
-        ),
-      );
+      _showSimpleDialog(type, msg, d);
     }
+  }
+
+  // دالة مساعدة لتنظيف كود النافذة
+  void _showSimpleDialog(String type, String msg, Map d) {
+    showDialog(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text(type == 'alert' ? "🚨 تحذير" : "ℹ️ إشعار"),
+        content: Text(msg),
+        actions: [
+          if (type == 'location' || d['lat'] != null) 
+            ElevatedButton.icon(
+              icon: const Icon(Icons.location_on),
+              label: const Text("فتح الخريطة"),
+              onPressed: () => launchUrl(
+                Uri.parse("https://www.google.com/maps/search/?api=1&query=${d['lat']},${d['lng']}"), 
+                mode: LaunchMode.externalApplication
+              ),
+            ),
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text("موافق")),
+        ],
+      ),
+    );
   }
 
   @override

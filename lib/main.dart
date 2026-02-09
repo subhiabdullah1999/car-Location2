@@ -13,6 +13,7 @@ void main() async {
   FirebaseDatabase.instance.databaseURL = "https://car-location-67e15-default-rtdb.firebaseio.com/";
   await requestPermissions(); 
 
+
   SharedPreferences prefs = await SharedPreferences.getInstance();
   String? savedID = prefs.getString('car_id');
   String? userType = prefs.getString('user_type');
@@ -24,7 +25,7 @@ void main() async {
 }
 
 Future<void> requestPermissions() async {
-  await [Permission.location, Permission.phone, Permission.sensors, Permission.ignoreBatteryOptimizations, Permission.notification].request();
+  await [Permission.location, Permission.phone, Permission.sensors, Permission.ignoreBatteryOptimizations, Permission.notification, Permission.ignoreBatteryOptimizations].request();
 }
 
 class SplashScreen extends StatefulWidget {
