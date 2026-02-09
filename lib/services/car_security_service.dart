@@ -26,17 +26,13 @@ class CarSecurityService {
     sLat = p.latitude; sLng = p.longitude;
     isSystemActive = true;
 
-    // 1. مراقبة الاهتزاز
     _vibeSub = accelerometerEvents.listen((e) {
       if (isSystemActive && (e.x.abs() > 15 || e.y.abs() > 15)) {
-        _send('alert', '⚠️ تحذير: تم رصد اهتزاز قوي بالسيارة!');
+        _send('alert', '⚠️ تحذير: اهتزاز قوي مكتشف!');
       }
     });
 
-    // 2. مراقبة المسافة (50 متر) + الملاحقة
-    _locSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 10)
-    ).listen((pos) {
+    _locSub = Geolocator.getPositionStream(locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 10)).listen((pos) {
       if (sLat != null && isSystemActive) {
         double dist = Geolocator.distanceBetween(sLat!, sLng!, pos.latitude, pos.longitude);
         if (dist > 50) {
@@ -46,7 +42,6 @@ class CarSecurityService {
       }
     });
 
-    // 3. الاستماع لأوامر الأدمن
     _cmdSub = _dbRef.child('devices/$myCarID/commands').onValue.listen((e) async {
       if (e.snapshot.value != null) {
         int id = (e.snapshot.value as Map)['id'] ?? 0;
@@ -55,19 +50,16 @@ class CarSecurityService {
         if (id == 3) _startDirectCalling();
       }
     });
-    _send('status', '🛡️ نظام الحماية نشط ويعمل الآن');
+    _send('status', '🛡️ نظام الحماية نشط');
   }
 
   void _startEmergencyProtocol(double dist) {
-    _send('alert', '🚨 اختراق! السيارة تحركت مسافة ${dist.toInt()} متر');
-    
-    // ملاحقة حية كل 5 ثوانٍ
+    _send('alert', '🚨 اختراق! تحركت السيارة ${dist.toInt()} متر');
     _trackSub = Stream.periodic(const Duration(seconds: 5)).listen((_) async {
       if (!isSystemActive) _trackSub?.cancel();
       Position p = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      _send('location', '🚀 ملاحقة مستمرة: السيارة في حالة حركة', lat: p.latitude, lng: p.longitude);
+      _send('location', '🚀 تتبع مستمر للسيارة', lat: p.latitude, lng: p.longitude);
     });
-
     _startDirectCalling();
   }
 
@@ -83,7 +75,7 @@ class CarSecurityService {
 
     for (String n in nums) {
       if (!isSystemActive || n.isEmpty) break;
-      _send('status', '📞 جاري الاتصال التلقائي بالطوارئ: $n');
+      _send('status', '📞 اتصال طوارئ مباشر بـ: $n');
       await FlutterPhoneDirectCaller.callNumber(n);
       await Future.delayed(const Duration(seconds: 40)); 
     }
@@ -98,17 +90,17 @@ class CarSecurityService {
 
   Future<void> sendLocation() async {
     Position p = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-    _send('location', '📍 تم جلب الموقع الحالي بنجاح', lat: p.latitude, lng: p.longitude);
+    _send('location', '📍 تم تحديث الموقع بنجاح', lat: p.latitude, lng: p.longitude);
   }
 
   Future<void> sendBattery() async {
     int l = await Battery().batteryLevel;
-    _send('battery', '🔋 مستوى شحن بطارية الجهاز: $l%');
+    _send('battery', '🔋 البطارية: $l%');
   }
 
   void stopSecuritySystem() {
     _vibeSub?.cancel(); _locSub?.cancel(); _cmdSub?.cancel(); _trackSub?.cancel();
     isSystemActive = false;
-    _send('status', '🔓 تم إيقاف نظام الحماية');
+    _send('status', '🔓 الحماية متوقفة');
   }
 }
