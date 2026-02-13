@@ -133,6 +133,27 @@ class CarAppDevice extends StatefulWidget {
 
 class _CarAppDeviceState extends State<CarAppDevice> {
   final CarSecurityService _service = CarSecurityService();
+  bool _isLoading = false; // إدارة حالة التحميل
+
+  Future<void> _handleSystemToggle() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      if (_service.isSystemActive) {
+        await _service.stopSecuritySystem();
+      } else {
+        await _service.initSecuritySystem();
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("خطأ في الاتصال: $e")),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -141,12 +162,11 @@ class _CarAppDeviceState extends State<CarAppDevice> {
       appBar: AppBar(
         title: const Text("جهاز تتبع السيارة"),
         centerTitle: true,
-        // تم استعادة زر الرجوع والتنقل
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () async {
             SharedPreferences prefs = await SharedPreferences.getInstance();
-            await prefs.remove('user_type'); // للسماح بتغيير النوع عند الرجوع
+            await prefs.remove('user_type');
             Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const AppTypeSelector()));
           },
         ),
@@ -155,26 +175,34 @@ class _CarAppDeviceState extends State<CarAppDevice> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(active ? Icons.security : Icons.security_outlined, size: 120, color: active ? Colors.green : Colors.red),
+            Icon(
+              active ? Icons.security : Icons.security_outlined, 
+              size: 120, 
+              color: active ? Colors.green : Colors.red
+            ),
             const SizedBox(height: 20),
-            Text(active ? "نظام الحماية: نشط" : "نظام الحماية: متوقف", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            Text(
+              active ? "نظام الحماية: نشط" : "نظام الحماية: متوقف", 
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)
+            ),
             const SizedBox(height: 50),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: active ? Colors.red : Colors.green,
-                padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+            SizedBox(
+              width: 260,
+              height: 65,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _isLoading ? Colors.grey : (active ? Colors.red : Colors.green),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(35)),
+                  elevation: 5,
+                ),
+                onPressed: _isLoading ? null : _handleSystemToggle,
+                child: _isLoading 
+                  ? const CircularProgressIndicator(color: Colors.white)
+                  : Text(
+                      active ? "إيقاف نظام الحماية" : "تفعيل نظام الحماية",
+                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
               ),
-              onPressed: () {
-                setState(() {
-                  if (active) {
-                    _service.stopSecuritySystem();
-                  } else {
-                    _service.initSecuritySystem();
-                  }
-                });
-              },
-              child: Text(active ? "إيقاف نظام الحماية" : "تفعيل نظام الحماية", style: const TextStyle(color: Colors.white)),
             ),
           ],
         ),
