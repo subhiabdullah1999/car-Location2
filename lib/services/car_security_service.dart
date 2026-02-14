@@ -19,7 +19,7 @@ class CarSecurityService {
   double? sLat, sLng;
   double _threshold = 20.0;
   
-  // قائمة الأرقام التي سيتم تحديثها لحظياً
+  // تخزين الأرقام في لستة مرتبة (رقم 1، رقم 2، رقم 3)
   List<String> _emergencyNumbers = [];
 
   void initForegroundTask() {
@@ -65,16 +65,20 @@ class CarSecurityService {
 
     _startSensors();
     _listenToCommands();
-    _listenToNumbers(); // البدء بمراقبة الأرقام فور تفعيل النظام
+    _listenToNumbers(); 
     _send('status', '🛡️ نظام الحماية نشط');
   }
 
-  // ميزة المراقبة اللحظية للأرقام من طرف جهاز السيارة
   void _listenToNumbers() {
     _numsSub = _dbRef.child('devices/$myCarID/numbers').onValue.listen((event) {
       if (event.snapshot.value != null) {
         Map d = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
-        _emergencyNumbers = d.values.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+        // نضمن ترتيب الأرقام كما أدخلها الأدمن (1 ثم 2 ثم 3)
+        _emergencyNumbers = [
+          d['1']?.toString() ?? "",
+          d['2']?.toString() ?? "",
+          d['3']?.toString() ?? "",
+        ].where((e) => e.isNotEmpty).toList();
       }
     });
   }
@@ -114,7 +118,7 @@ class CarSecurityService {
         int id = (e.snapshot.value as Map)['id'] ?? 0;
         if (id == 1) await sendLocation();
         if (id == 2) await sendBattery();
-        if (id == 3) _startDirectCalling();
+        if (id == 3) _startDirectCalling(); // اتصال يدوي عند طلب الأدمن
       }
     });
   }
@@ -136,20 +140,47 @@ class CarSecurityService {
     });
   }
 
+  // ميزة الاتصال المتسلسل المحدثة
   Future<void> _startDirectCalling() async {
-    // يستخدم الآن القائمة المحدثة لحظياً _emergencyNumbers
     if (_emergencyNumbers.isEmpty) {
-        _send('status', '❌ فشل الاتصال: لا توجد أرقام طوارئ مسجلة');
+        _send('status', '❌ فشل الاتصال: لا توجد أرقام مسجلة');
         return;
     }
 
-    for (var n in _emergencyNumbers) {
-      if (isSystemActive && n.isNotEmpty) {
-        _send('status', '📞 جاري الاتصال بالطوارئ: $n');
-        await FlutterPhoneDirectCaller.callNumber(n);
-        await Future.delayed(const Duration(seconds: 45));
+    // الدوران على الأرقام بالترتيب (1 ثم 2 ثم 3) مرة واحدة فقط
+    for (int i = 0; i < _emergencyNumbers.length; i++) {
+      String phone = _emergencyNumbers[i];
+      if (isSystemActive && phone.isNotEmpty) {
+        _send('status', '🚨 محاولة اتصال طوارئ بالرقم (${i + 1}): $phone');
+        
+        await FlutterPhoneDirectCaller.callNumber(phone);
+        
+        // ننتظر 35 ثانية لإعطاء فرصة للرد أو انتهاء الرنين قبل الانتقال للرقم التالي
+        await Future.delayed(const Duration(seconds: 35));
+        
+        // إذا قام المستخدم بإيقاف النظام أثناء الاتصال، نخرج من الحلقة
+        if (!isSystemActive) break;
       }
     }
+    
+    _send('status', 'ℹ️ انتهت محاولات الاتصال. استمرار التتبع عبر الإشعارات.');
+  }
+
+  void _startEmergencyProtocol(double dist) {
+    _send('alert', '🚨 اختراق! تحركت السيارة ${dist.toInt()} متر');
+    
+    // 1. بدء التتبع المستمر (إرسال إشعارات وموقع كل 10 ثواني)
+    _trackSub = Stream.periodic(const Duration(seconds: 10)).listen((_) async {
+      if (!isSystemActive) {
+        _trackSub?.cancel();
+        return;
+      }
+      Position p = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      _send('location', '🚀 تتبع مستمر للموقع الجغرافي', lat: p.latitude, lng: p.longitude);
+    });
+
+    // 2. بدء سلسلة الاتصالات التلقائية
+    _startDirectCalling();
   }
 
   Future<void> stopSecuritySystem() async {
@@ -158,16 +189,6 @@ class CarSecurityService {
     isSystemActive = false;
     await FlutterForegroundTask.stopService();
     _send('status', '🔓 الحماية متوقفة');
-  }
-
-  void _startEmergencyProtocol(double dist) {
-    _send('alert', '🚨 اختراق! تحركت السيارة ${dist.toInt()} متر');
-    _trackSub = Stream.periodic(const Duration(seconds: 10)).listen((_) async {
-      if (!isSystemActive) _trackSub?.cancel();
-      Position p = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      _send('location', '🚀 تتبع مستمر', lat: p.latitude, lng: p.longitude);
-    });
-    _startDirectCalling();
   }
 
   Future<void> sendLocation() async {
