@@ -13,7 +13,6 @@ void main() async {
   FirebaseDatabase.instance.databaseURL = "https://car-location-67e15-default-rtdb.firebaseio.com/";
   await requestPermissions(); 
 
-
   SharedPreferences prefs = await SharedPreferences.getInstance();
   String? savedID = prefs.getString('car_id');
   String? userType = prefs.getString('user_type');
@@ -25,7 +24,7 @@ void main() async {
 }
 
 Future<void> requestPermissions() async {
-  await [Permission.location, Permission.phone, Permission.sensors, Permission.ignoreBatteryOptimizations, Permission.notification, Permission.ignoreBatteryOptimizations].request();
+  await [Permission.location, Permission.phone, Permission.sensors, Permission.ignoreBatteryOptimizations, Permission.notification].request();
 }
 
 class SplashScreen extends StatefulWidget {
@@ -71,14 +70,26 @@ class AppTypeSelector extends StatefulWidget {
 class _AppTypeSelectorState extends State<AppTypeSelector> {
   final TextEditingController _idController = TextEditingController();
 
-  void _saveIDAndGo(String type, Widget target) async {
+ void _saveIDAndGo(String type, Widget target) async {
     if (_idController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("يرجى إدخال رقم هاتف السيارة")));
       return;
     }
+
+    String carId = _idController.text;
     SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString('car_id', _idController.text);
+    await prefs.setString('car_id', carId);
     await prefs.setString('user_type', type);
+
+    // نرفع القيمة في الخلفية دون انتظار "await" لكي لا يتوقف التطبيق
+    FirebaseDatabase.instance.ref().child('devices/$carId/sensitivity').get().then((snapshot) {
+      if (!snapshot.exists) {
+        FirebaseDatabase.instance.ref().child('devices/$carId/sensitivity').set(20);
+      }
+    });
+
+    // الانتقال الفوري للشاشة التالية
+    if (!mounted) return;
     Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => target));
   }
 
@@ -124,7 +135,6 @@ class _AppTypeSelectorState extends State<AppTypeSelector> {
   }
 }
 
-// --- شاشة جهاز السيارة (تم استعادة التصميم الأصلي وزر الرجوع) ---
 class CarAppDevice extends StatefulWidget {
   const CarAppDevice({super.key});
   @override
@@ -133,11 +143,10 @@ class CarAppDevice extends StatefulWidget {
 
 class _CarAppDeviceState extends State<CarAppDevice> {
   final CarSecurityService _service = CarSecurityService();
-  bool _isLoading = false; // إدارة حالة التحميل
+  bool _isLoading = false;
 
   Future<void> _handleSystemToggle() async {
     setState(() => _isLoading = true);
-    
     try {
       if (_service.isSystemActive) {
         await _service.stopSecuritySystem();
@@ -145,13 +154,9 @@ class _CarAppDeviceState extends State<CarAppDevice> {
         await _service.initSecuritySystem();
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("خطأ في الاتصال: $e")),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("خطأ: $e")));
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -175,33 +180,21 @@ class _CarAppDeviceState extends State<CarAppDevice> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              active ? Icons.security : Icons.security_outlined, 
-              size: 120, 
-              color: active ? Colors.green : Colors.red
-            ),
+            Icon(active ? Icons.security : Icons.security_outlined, size: 120, color: active ? Colors.green : Colors.red),
             const SizedBox(height: 20),
-            Text(
-              active ? "نظام الحماية: نشط" : "نظام الحماية: متوقف", 
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)
-            ),
+            Text(active ? "نظام الحماية: نشط" : "نظام الحماية: متوقف", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 50),
             SizedBox(
-              width: 260,
-              height: 65,
+              width: 260, height: 65,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _isLoading ? Colors.grey : (active ? Colors.red : Colors.green),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(35)),
-                  elevation: 5,
                 ),
                 onPressed: _isLoading ? null : _handleSystemToggle,
                 child: _isLoading 
                   ? const CircularProgressIndicator(color: Colors.white)
-                  : Text(
-                      active ? "إيقاف نظام الحماية" : "تفعيل نظام الحماية",
-                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
+                  : Text(active ? "إيقاف نظام الحماية" : "تفعيل نظام الحماية", style: const TextStyle(color: Colors.white, fontSize: 18)),
               ),
             ),
           ],

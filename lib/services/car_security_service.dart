@@ -13,10 +13,14 @@ class CarSecurityService {
   CarSecurityService._internal();
 
   final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
-  StreamSubscription? _vibeSub, _locSub, _cmdSub, _trackSub;
+  StreamSubscription? _vibeSub, _locSub, _cmdSub, _trackSub, _sensSub, _numsSub;
   bool isSystemActive = false;
   String? myCarID;
   double? sLat, sLng;
+  double _threshold = 20.0;
+  
+  // قائمة الأرقام التي سيتم تحديثها لحظياً
+  List<String> _emergencyNumbers = [];
 
   void initForegroundTask() {
     FlutterForegroundTask.init(
@@ -42,10 +46,8 @@ class CarSecurityService {
     );
   }
 
-  // تفعيل النظام بسرعة فائقة
   Future<void> initSecuritySystem() async {
     if (isSystemActive) return;
-
     initForegroundTask();
     await FlutterForegroundTask.startService(
       notificationTitle: '🛡️ نظام حماية HASBA نشط',
@@ -55,31 +57,40 @@ class CarSecurityService {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     myCarID = prefs.getString('car_id');
 
-    // جلب سريع للموقع (بدون انتظار)
-    Position? p = await Geolocator.getLastKnownPosition();
-    if (p == null) {
-      try {
-        p = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.medium,
-          timeLimit: const Duration(seconds: 5), // مهلة 5 ثواني فقط
-        );
-      } catch (e) {
-        // إذا فشل الـ GPS، نأخذ موقعاً صفرياً مؤقتاً لتفعيل النظام فوراً
-        p = Position(latitude: 0, longitude: 0, timestamp: DateTime.now(), accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0);
-      }
-    }
+    Position? p = await Geolocator.getLastKnownPosition() ?? 
+                 await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium);
 
     sLat = p.latitude; sLng = p.longitude;
     isSystemActive = true;
 
     _startSensors();
     _listenToCommands();
-    _send('status', '🛡️ نظام الحماية نشط (استجابة سريعة)');
+    _listenToNumbers(); // البدء بمراقبة الأرقام فور تفعيل النظام
+    _send('status', '🛡️ نظام الحماية نشط');
+  }
+
+  // ميزة المراقبة اللحظية للأرقام من طرف جهاز السيارة
+  void _listenToNumbers() {
+    _numsSub = _dbRef.child('devices/$myCarID/numbers').onValue.listen((event) {
+      if (event.snapshot.value != null) {
+        Map d = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
+        _emergencyNumbers = d.values.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+      }
+    });
+  }
+
+  void _listenToSensitivity() {
+    _sensSub = _dbRef.child('devices/$myCarID/sensitivity').onValue.listen((event) {
+      if (event.snapshot.value != null) {
+        _threshold = double.parse(event.snapshot.value.toString());
+      }
+    });
   }
 
   void _startSensors() {
+    _listenToSensitivity();
     _vibeSub = accelerometerEvents.listen((e) {
-      if (isSystemActive && (e.x.abs() > 15 || e.y.abs() > 15)) {
+      if (isSystemActive && (e.x.abs() > _threshold || e.y.abs() > _threshold || e.z.abs() > _threshold)) {
         _send('alert', '⚠️ تحذير: اهتزاز قوي مكتشف!');
       }
     });
@@ -108,39 +119,55 @@ class CarSecurityService {
     });
   }
 
-  void _startEmergencyProtocol(double dist) {
-    _send('alert', '🚨 اختراق! تحركت السيارة ${dist.toInt()} متر');
-    _trackSub = Stream.periodic(const Duration(seconds: 5)).listen((_) async {
-      if (!isSystemActive) _trackSub?.cancel();
-      Position p = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      _send('location', '🚀 تتبع مستمر للسيارة', lat: p.latitude, lng: p.longitude);
+  void _send(String t, String m, {double? lat, double? lng}) async {
+    if (myCarID == null) return;
+    int batteryLevel = await Battery().batteryLevel;
+    DateTime now = DateTime.now();
+    String formattedTime = "${now.hour}:${now.minute.toString().padLeft(2, '0')}";
+    String formattedDate = "${now.year}/${now.month}/${now.day}";
+    String finalMessage = "$m\n🔋 $batteryLevel% | 🕒 $formattedTime | 📅 $formattedDate";
+
+    _dbRef.child('devices/$myCarID/responses').set({
+      'type': t, 
+      'message': finalMessage, 
+      'lat': lat, 
+      'lng': lng, 
+      'timestamp': ServerValue.timestamp
     });
-    _startDirectCalling();
   }
 
   Future<void> _startDirectCalling() async {
-    DataSnapshot s = await _dbRef.child('devices/$myCarID/numbers').get();
-    if (!s.exists || s.value == null) return;
-    
-    final Map<dynamic, dynamic> d = Map<dynamic, dynamic>.from(s.value as Map);
-    List<String> nums = [];
-    if (d['1'] != null) nums.add(d['1'].toString());
-    if (d['2'] != null) nums.add(d['2'].toString());
-    if (d['3'] != null) nums.add(d['3'].toString());
+    // يستخدم الآن القائمة المحدثة لحظياً _emergencyNumbers
+    if (_emergencyNumbers.isEmpty) {
+        _send('status', '❌ فشل الاتصال: لا توجد أرقام طوارئ مسجلة');
+        return;
+    }
 
-    for (String n in nums) {
-      if (!isSystemActive || n.isEmpty) break;
-      _send('status', '📞 اتصال طوارئ بـ: $n');
-      await FlutterPhoneDirectCaller.callNumber(n);
-      await Future.delayed(const Duration(seconds: 45)); 
+    for (var n in _emergencyNumbers) {
+      if (isSystemActive && n.isNotEmpty) {
+        _send('status', '📞 جاري الاتصال بالطوارئ: $n');
+        await FlutterPhoneDirectCaller.callNumber(n);
+        await Future.delayed(const Duration(seconds: 45));
+      }
     }
   }
 
-  void _send(String t, String m, {double? lat, double? lng}) {
-    if (myCarID == null) return;
-    _dbRef.child('devices/$myCarID/responses').set({
-      'type': t, 'message': m, 'lat': lat, 'lng': lng, 'timestamp': ServerValue.timestamp
+  Future<void> stopSecuritySystem() async {
+    _vibeSub?.cancel(); _locSub?.cancel(); _cmdSub?.cancel(); 
+    _trackSub?.cancel(); _sensSub?.cancel(); _numsSub?.cancel();
+    isSystemActive = false;
+    await FlutterForegroundTask.stopService();
+    _send('status', '🔓 الحماية متوقفة');
+  }
+
+  void _startEmergencyProtocol(double dist) {
+    _send('alert', '🚨 اختراق! تحركت السيارة ${dist.toInt()} متر');
+    _trackSub = Stream.periodic(const Duration(seconds: 10)).listen((_) async {
+      if (!isSystemActive) _trackSub?.cancel();
+      Position p = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      _send('location', '🚀 تتبع مستمر', lat: p.latitude, lng: p.longitude);
     });
+    _startDirectCalling();
   }
 
   Future<void> sendLocation() async {
@@ -149,14 +176,6 @@ class CarSecurityService {
   }
 
   Future<void> sendBattery() async {
-    int l = await (Battery().batteryLevel);
-    _send('battery', '🔋 البطارية: $l%');
-  }
-
-  Future<void> stopSecuritySystem() async {
-    _vibeSub?.cancel(); _locSub?.cancel(); _cmdSub?.cancel(); _trackSub?.cancel();
-    isSystemActive = false;
-    await FlutterForegroundTask.stopService();
-    _send('status', '🔓 الحماية متوقفة');
+    _send('battery', '🔋 تحديث حالة الطاقة');
   }
 }
