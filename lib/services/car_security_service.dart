@@ -70,19 +70,30 @@ class CarSecurityService {
     _send('status', '🛡️ نظام الحماية نشط');
   }
 
-  void _listenToNumbers() {
-    _numsSub = _dbRef.child('devices/$myCarID/numbers').onValue.listen((event) {
-      if (event.snapshot.value != null) {
+ void _listenToNumbers() {
+  // التأكد من أن myCarID ليس نول
+  if (myCarID == null) return;
+
+  _numsSub = _dbRef.child('devices/$myCarID/numbers').onValue.listen((event) {
+    if (event.snapshot.value != null) {
+      try {
         Map d = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
-        // نضمن ترتيب الأرقام كما أدخلها الأدمن (1 ثم 2 ثم 3)
         _emergencyNumbers = [
           d['1']?.toString() ?? "",
           d['2']?.toString() ?? "",
           d['3']?.toString() ?? "",
         ].where((e) => e.isNotEmpty).toList();
+        
+        print("✅ الأرقام المحدثة في جهاز السيارة: $_emergencyNumbers");
+      } catch (e) {
+        print("❌ خطأ في تنسيق الأرقام: $e");
       }
-    });
-  }
+    } else {
+      print("⚠️ لا توجد أرقام في قاعدة البيانات لهذا المعرف");
+      _emergencyNumbers = [];
+    }
+  });
+}
 
   void _listenToSensitivity() {
     _sensSub = _dbRef.child('devices/$myCarID/sensitivity').onValue.listen((event) {
@@ -125,10 +136,26 @@ class CarSecurityService {
         case 4: _send('status', '🔄 جاري إعادة ضبط النظام...'); break; 
         
         // --- الأوامر الجديدة ---
-        case 5: // الاتصال بالرقم المحدد
-          _send('status', '📞 جاري الاتصال بالرقم المباشر...');
-          await FlutterPhoneDirectCaller.callNumber("0936798549");
-          break;
+        case 5: // الاتصال بالرقم الأول
+  _send('status', '🔍 جاري التحقق من الرقم الأول...');
+  
+  // إذا كانت القائمة فارغة، نحاول جلبها مباشرة مرة واحدة
+  if (_emergencyNumbers.isEmpty) {
+    final snapshot = await _dbRef.child('devices/$myCarID/numbers/1').get();
+    if (snapshot.exists && snapshot.value != null) {
+      String phone = snapshot.value.toString();
+      _send('status', '📞 اتصال مباشر بالرقم المسجل: $phone');
+      await FlutterPhoneDirectCaller.callNumber(phone);
+    } else {
+      _send('status', '❌ خطأ: لا يوجد رقم أول مسجل في قاعدة البيانات');
+    }
+  } else {
+    // إذا كانت القائمة جاهزة، نتصل بالرقم الأول
+    String firstPhone = _emergencyNumbers[0];
+    _send('status', '📞 جاري الاتصال بالرقم: $firstPhone');
+    await FlutterPhoneDirectCaller.callNumber(firstPhone);
+  }
+  break;
           
         case 6: // فتح البلوتوث (يتطلب أندرويد أقل من 12 أو صلاحيات خاصة)
           _send('status', '🔵 تم إرسال أمر فتح البلوتوث');
