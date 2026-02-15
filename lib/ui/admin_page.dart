@@ -32,30 +32,22 @@ class _AdminPageState extends State<AdminPage> {
   void initState() {
     super.initState();
     _setupNotifs();
-    _loadSavedNumbers(); // تحميل فوري من ذاكرة الهاتف
+    _loadSavedNumbers();
   }
 
-  // دالة التحميل الفوري من ذاكرة الجهاز (تضمن ظهور الأرقام فوراً)
   void _loadSavedNumbers() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     _carID = prefs.getString('car_id');
     
     if (_carID != null) {
       _listenToStatus();
-      
-      // قراءة من الذاكرة المحلية أولاً
       setState(() {
         _n1.text = prefs.getString('num1_$_carID') ?? "";
         _n2.text = prefs.getString('num2_$_carID') ?? "";
         _n3.text = prefs.getString('num3_$_carID') ?? "";
-        
-        // إذا وجدت أرقام، اغلق القائمة فوراً
-        if (_n1.text.isNotEmpty) {
-          _isExpanded = false;
-        }
+        if (_n1.text.isNotEmpty) _isExpanded = false;
       });
 
-      // ثم التحديث من Firebase في الخلفية للتأكد من المزامنة
       _dbRef.child('devices/$_carID/numbers').get().then((snapshot) {
         if (snapshot.exists && snapshot.value != null) {
           Map d = Map<dynamic, dynamic>.from(snapshot.value as Map);
@@ -110,10 +102,7 @@ class _AdminPageState extends State<AdminPage> {
       appBar: AppBar(
         title: Text("تحكم السيارة (${_carID ?? ''})"),
         backgroundColor: Colors.blue.shade900,
-        leading: IconButton(icon: const Icon(Icons.exit_to_app), onPressed: () async {
-          // عند تسجيل الخروج، لا نمسح الأرقام المحفوظة، فقط نمسح الـ car_id إذا أردت
-          Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const AppTypeSelector()));
-        }),
+        leading: IconButton(icon: const Icon(Icons.exit_to_app), onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const AppTypeSelector()))),
       ),
       body: _carID == null 
           ? const Center(child: CircularProgressIndicator()) 
@@ -134,7 +123,7 @@ class _AdminPageState extends State<AdminPage> {
     return Card(
       margin: const EdgeInsets.all(15),
       child: ExpansionTile(
-        key: GlobalKey(), // يضمن تحديث الحالة (مفتوح/مغلق) برمجياً
+        key: GlobalKey(),
         initiallyExpanded: _isExpanded,
         onExpansionChanged: (val) => setState(() => _isExpanded = val),
         title: const Text("📞 أرقام الطوارئ المحفوظة"),
@@ -150,17 +139,13 @@ class _AdminPageState extends State<AdminPage> {
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade800, minimumSize: const Size(double.infinity, 50)),
                 icon: const Icon(Icons.save, color: Colors.white),
                 onPressed: () async {
-                  // 1. الحفظ في Firebase
                   await _dbRef.child('devices/$_carID/numbers').set({'1': _n1.text, '2': _n2.text, '3': _n3.text});
-                  
-                  // 2. الحفظ في ذاكرة الهاتف (السر في بقاء الأرقام)
                   SharedPreferences prefs = await SharedPreferences.getInstance();
                   await prefs.setString('num1_$_carID', _n1.text);
                   await prefs.setString('num2_$_carID', _n2.text);
                   await prefs.setString('num3_$_carID', _n3.text);
-
-                  setState(() { _isExpanded = false; }); // إغلاق القائمة
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ تم الحفظ في الهاتف والسحابة بنجاح")));
+                  setState(() { _isExpanded = false; });
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ تم الحفظ بنجاح")));
                 }, 
                 label: const Text("حفظ وتعديل", style: TextStyle(color: Colors.white)),
               ),
@@ -171,7 +156,6 @@ class _AdminPageState extends State<AdminPage> {
     );
   }
 
-  // (بقية الودجات كما هي دون تغيير لضمان الحفاظ على الشكل والمميزات)
   Widget _statusWidget() => Container(
     padding: const EdgeInsets.all(20), margin: const EdgeInsets.all(15),
     decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: [const BoxShadow(color: Colors.black12, blurRadius: 10)]),
@@ -201,25 +185,49 @@ class _AdminPageState extends State<AdminPage> {
     }
   );
 
-  Widget _actionsWidget() => GridView.count(
-    shrinkWrap: true, 
-    physics: const NeverScrollableScrollPhysics(),
-    crossAxisCount: 2, 
-    padding: const EdgeInsets.all(15), 
-    mainAxisSpacing: 10, 
-    crossAxisSpacing: 10,
-    childAspectRatio: 1.2, // لتناسب الأيقونات الجديدة
+  Widget _actionsWidget() => Column(
     children: [
-      _actionBtn(1, "تتبع الموقع", Icons.map, Colors.blue),
-      _actionBtn(2, "حالة البطارية", Icons.battery_charging_full, Colors.green),
-      // _actionBtn(3, "طوارئ (3 أرقام)", Icons.contact_phone, Colors.red),
-      // _actionBtn(4, "إعادة ضبط", Icons.refresh, Colors.orange),
-      
-      // الأزرار الجديدة
-      _actionBtn(5, "اتصال بالسيارة", Icons.phone_forwarded, Colors.teal),
-      // _actionBtn(6, "فتح البلوتوث", Icons.bluetooth, Colors.indigo),
-      // _actionBtn(7, "نقطة اتصال", Icons.wifi_tethering, Colors.deepPurple),
-      _actionBtn(8, "إعادة تشغيل", Icons.power_settings_new, Colors.redAccent),
+      // زر التحكم في الاهتزاز الجديد
+      StreamBuilder(
+        stream: _dbRef.child('devices/$_carID/vibration_enabled').onValue,
+        builder: (context, snapshot) {
+          bool isVibeOn = true; 
+          if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
+            isVibeOn = snapshot.data!.snapshot.value as bool;
+          }
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isVibeOn ? Colors.redAccent : Colors.green,
+                minimumSize: const Size(double.infinity, 55),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: Icon(isVibeOn ? Icons.vibration_outlined : Icons.vibration, color: Colors.white),
+              label: Text(
+                isVibeOn ? "إيقاف نظام الاهتزاز" : "تشغيل نظام الاهتزاز",
+                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              onPressed: () => _dbRef.child('devices/$_carID/vibration_enabled').set(!isVibeOn),
+            ),
+          );
+        },
+      ),
+      GridView.count(
+        shrinkWrap: true, 
+        physics: const NeverScrollableScrollPhysics(),
+        crossAxisCount: 2, 
+        padding: const EdgeInsets.all(15), 
+        mainAxisSpacing: 10, 
+        crossAxisSpacing: 10,
+        childAspectRatio: 1.2,
+        children: [
+          _actionBtn(1, "تتبع الموقع", Icons.map, Colors.blue),
+          _actionBtn(2, "حالة البطارية", Icons.battery_charging_full, Colors.green),
+          _actionBtn(5, "اتصال بالسيارة", Icons.phone_forwarded, Colors.teal),
+          _actionBtn(8, "إعادة تشغيل", Icons.power_settings_new, Colors.redAccent),
+        ],
+      ),
     ],
   );
 

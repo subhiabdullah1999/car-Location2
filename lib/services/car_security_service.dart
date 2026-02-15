@@ -14,13 +14,13 @@ class CarSecurityService {
   CarSecurityService._internal();
 
   final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
-  StreamSubscription? _vibeSub, _locSub, _cmdSub, _trackSub, _sensSub, _numsSub;
+  StreamSubscription? _vibeSub, _locSub, _cmdSub, _trackSub, _sensSub, _numsSub, _vibeToggleSub;
   bool isSystemActive = false;
+  bool _vibrationEnabled = true; // الميزة الجديدة
   String? myCarID;
   double? sLat, sLng;
   double _threshold = 20.0;
   
-  // تخزين الأرقام في لستة مرتبة (رقم 1، رقم 2، رقم 3)
   List<String> _emergencyNumbers = [];
 
   void initForegroundTask() {
@@ -59,7 +59,7 @@ class CarSecurityService {
     myCarID = prefs.getString('car_id');
 
     Position? p = await Geolocator.getLastKnownPosition() ?? 
-                 await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium);
+                  await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.medium);
 
     sLat = p.latitude; sLng = p.longitude;
     isSystemActive = true;
@@ -67,33 +67,39 @@ class CarSecurityService {
     _startSensors();
     _listenToCommands();
     _listenToNumbers(); 
+    _listenToVibrationToggle(); // تفعيل استماع حالة الاهتزاز
     _send('status', '🛡️ نظام الحماية نشط');
   }
 
- void _listenToNumbers() {
-  // التأكد من أن myCarID ليس نول
-  if (myCarID == null) return;
-
-  _numsSub = _dbRef.child('devices/$myCarID/numbers').onValue.listen((event) {
-    if (event.snapshot.value != null) {
-      try {
-        Map d = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
-        _emergencyNumbers = [
-          d['1']?.toString() ?? "",
-          d['2']?.toString() ?? "",
-          d['3']?.toString() ?? "",
-        ].where((e) => e.isNotEmpty).toList();
-        
-        print("✅ الأرقام المحدثة في جهاز السيارة: $_emergencyNumbers");
-      } catch (e) {
-        print("❌ خطأ في تنسيق الأرقام: $e");
+  // --- ميزة التحكم في الاهتزاز الجديدة (تعمل لكل سيارة على حدة) ---
+  void _listenToVibrationToggle() {
+    if (myCarID == null) return;
+    _vibeToggleSub = _dbRef.child('devices/$myCarID/vibration_enabled').onValue.listen((event) {
+      if (event.snapshot.value != null) {
+        _vibrationEnabled = event.snapshot.value as bool;
+        print("🛠️ حالة اهتزاز السيارة $myCarID: $_vibrationEnabled");
       }
-    } else {
-      print("⚠️ لا توجد أرقام في قاعدة البيانات لهذا المعرف");
-      _emergencyNumbers = [];
-    }
-  });
-}
+    });
+  }
+
+  void _listenToNumbers() {
+    if (myCarID == null) return;
+    _numsSub = _dbRef.child('devices/$myCarID/numbers').onValue.listen((event) {
+      if (event.snapshot.value != null) {
+        try {
+          Map d = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
+          _emergencyNumbers = [
+            d['1']?.toString() ?? "",
+            d['2']?.toString() ?? "",
+            d['3']?.toString() ?? "",
+          ].where((e) => e.isNotEmpty).toList();
+          print("✅ الأرقام المحدثة: $_emergencyNumbers");
+        } catch (e) {
+          print("❌ خطأ في تنسيق الأرقام: $e");
+        }
+      }
+    });
+  }
 
   void _listenToSensitivity() {
     _sensSub = _dbRef.child('devices/$myCarID/sensitivity').onValue.listen((event) {
@@ -106,8 +112,10 @@ class CarSecurityService {
   void _startSensors() {
     _listenToSensitivity();
     _vibeSub = accelerometerEvents.listen((e) {
-      if (isSystemActive && (e.x.abs() > _threshold || e.y.abs() > _threshold || e.z.abs() > _threshold)) {
+      // تم دمج شرط _vibrationEnabled هنا لضمان عملها
+      if (isSystemActive && _vibrationEnabled && (e.x.abs() > _threshold || e.y.abs() > _threshold || e.z.abs() > _threshold)) {
         _send('alert', '⚠️ تحذير: اهتزاز قوي مكتشف!');
+        _startDirectCalling(); 
       }
     });
 
@@ -124,56 +132,52 @@ class CarSecurityService {
     });
   }
 
- void _listenToCommands() {
-  _cmdSub = _dbRef.child('devices/$myCarID/commands').onValue.listen((e) async {
-    if (e.snapshot.value != null && isSystemActive) {
-      int id = (e.snapshot.value as Map)['id'] ?? 0;
-      
-      switch (id) {
-        case 1: await sendLocation(); break;
-        case 2: await sendBattery(); break;
-        case 3: _startDirectCalling(); break; // الاتصال بأرقام الطوارئ الثلاثة
-        case 4: _send('status', '🔄 جاري إعادة ضبط النظام...'); break; 
+  void _listenToCommands() {
+    _cmdSub = _dbRef.child('devices/$myCarID/commands').onValue.listen((e) async {
+      if (e.snapshot.value != null && isSystemActive) {
+        int id = (e.snapshot.value as Map)['id'] ?? 0;
         
-        // --- الأوامر الجديدة ---
-        case 5: // الاتصال بالرقم الأول
-  _send('status', '🔍 جاري التحقق من الرقم الأول...');
-  
-  // إذا كانت القائمة فارغة، نحاول جلبها مباشرة مرة واحدة
-  if (_emergencyNumbers.isEmpty) {
-    final snapshot = await _dbRef.child('devices/$myCarID/numbers/1').get();
-    if (snapshot.exists && snapshot.value != null) {
-      String phone = snapshot.value.toString();
-      _send('status', '📞 اتصال مباشر بالرقم المسجل: $phone');
-      await FlutterPhoneDirectCaller.callNumber(phone);
-    } else {
-      _send('status', '❌ خطأ: لا يوجد رقم أول مسجل في قاعدة البيانات');
-    }
-  } else {
-    // إذا كانت القائمة جاهزة، نتصل بالرقم الأول
-    String firstPhone = _emergencyNumbers[0];
-    _send('status', '📞 جاري الاتصال بالرقم: $firstPhone');
-    await FlutterPhoneDirectCaller.callNumber(firstPhone);
-  }
-  break;
+        switch (id) {
+          case 1: await sendLocation(); break;
+          case 2: await sendBattery(); break;
+          case 3: _startDirectCalling(); break; 
+          case 4: _send('status', '🔄 جاري إعادة ضبط النظام...'); break; 
           
-        case 6: // فتح البلوتوث (يتطلب أندرويد أقل من 12 أو صلاحيات خاصة)
-          _send('status', '🔵 تم إرسال أمر فتح البلوتوث');
-          // ملاحظة: الأندرويد الحديث يمنع فتح البلوتوث تلقائياً دون تدخل المستخدم لأسباب أمنية
-          break;
+          case 5: // أمر الاتصال المباشر بالرقم الأول
+            _send('status', '🔍 جاري التحقق من الرقم الأول...');
+            if (_emergencyNumbers.isEmpty) {
+              final snapshot = await _dbRef.child('devices/$myCarID/numbers/1').get();
+              if (snapshot.exists && snapshot.value != null) {
+                String phone = snapshot.value.toString();
+                _send('status', '📞 اتصال مباشر بالرقم المسجل: $phone');
+                await FlutterPhoneDirectCaller.callNumber(phone);
+              } else {
+                _send('status', '❌ خطأ: لا يوجد رقم أول مسجل');
+              }
+            } else {
+              String firstPhone = _emergencyNumbers[0];
+              _send('status', '📞 جاري الاتصال بالرقم: $firstPhone');
+              await FlutterPhoneDirectCaller.callNumber(firstPhone);
+            }
+            break;
+            
+          case 6: // البلوتوث
+            _send('status', '🔵 تم إرسال أمر فتح البلوتوث');
+            break;
 
-        case 7: // فتح نقطة الاتصال
-          _send('status', '🌐 تم إرسال أمر نقطة الاتصال');
-          break;
+          case 7: // نقطة الاتصال
+            _send('status', '🌐 تم إرسال أمر نقطة الاتصال');
+            break;
 
-        case 8: // إعادة تشغيل الجهاز (تتطلب Root غالباً)
-          _send('status', '⚠️ محاولة إعادة تشغيل الجهاز...');
-          try { Process.run('reboot', []); } catch (e) { _send('status', '❌ فشل إعادة التشغيل: نقص صلاحيات'); }
-          break;
+          case 8: // إعادة تشغيل الجهاز
+            _send('status', '⚠️ محاولة إعادة تشغيل الجهاز...');
+            try { Process.run('reboot', []); } catch (e) { _send('status', '❌ فشل إعادة التشغيل: نقص صلاحيات'); }
+            break;
+        }
       }
-    }
-  });
-}
+    });
+  }
+
   void _send(String t, String m, {double? lat, double? lng}) async {
     if (myCarID == null) return;
     int batteryLevel = await Battery().batteryLevel;
@@ -191,36 +195,27 @@ class CarSecurityService {
     });
   }
 
-  // ميزة الاتصال المتسلسل المحدثة
   Future<void> _startDirectCalling() async {
     if (_emergencyNumbers.isEmpty) {
         _send('status', '❌ فشل الاتصال: لا توجد أرقام مسجلة');
         return;
     }
 
-    // الدوران على الأرقام بالترتيب (1 ثم 2 ثم 3) مرة واحدة فقط
     for (int i = 0; i < _emergencyNumbers.length; i++) {
       String phone = _emergencyNumbers[i];
-      if (isSystemActive && phone.isNotEmpty) {
+      // فحص إذا كان النظام والاهتزاز لا يزالان مفعلين أثناء الدوران
+      if (isSystemActive && _vibrationEnabled && phone.isNotEmpty) {
         _send('status', '🚨 محاولة اتصال طوارئ بالرقم (${i + 1}): $phone');
-        
         await FlutterPhoneDirectCaller.callNumber(phone);
-        
-        // ننتظر 35 ثانية لإعطاء فرصة للرد أو انتهاء الرنين قبل الانتقال للرقم التالي
         await Future.delayed(const Duration(seconds: 35));
-        
-        // إذا قام المستخدم بإيقاف النظام أثناء الاتصال، نخرج من الحلقة
-        if (!isSystemActive) break;
+        if (!isSystemActive || !_vibrationEnabled) break;
       }
     }
-    
-    _send('status', 'ℹ️ انتهت محاولات الاتصال. استمرار التتبع عبر الإشعارات.');
+    _send('status', 'ℹ️ انتهت محاولات الاتصال.');
   }
 
   void _startEmergencyProtocol(double dist) {
     _send('alert', '🚨 اختراق! تحركت السيارة ${dist.toInt()} متر');
-    
-    // 1. بدء التتبع المستمر (إرسال إشعارات وموقع كل 10 ثواني)
     _trackSub = Stream.periodic(const Duration(seconds: 10)).listen((_) async {
       if (!isSystemActive) {
         _trackSub?.cancel();
@@ -229,14 +224,11 @@ class CarSecurityService {
       Position p = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
       _send('location', '🚀 تتبع مستمر للموقع الجغرافي', lat: p.latitude, lng: p.longitude);
     });
-
-    // 2. بدء سلسلة الاتصالات التلقائية
-    _startDirectCalling();
   }
 
   Future<void> stopSecuritySystem() async {
     _vibeSub?.cancel(); _locSub?.cancel(); _cmdSub?.cancel(); 
-    _trackSub?.cancel(); _sensSub?.cancel(); _numsSub?.cancel();
+    _trackSub?.cancel(); _sensSub?.cancel(); _numsSub?.cancel(); _vibeToggleSub?.cancel();
     isSystemActive = false;
     await FlutterForegroundTask.stopService();
     _send('status', '🔓 الحماية متوقفة');
