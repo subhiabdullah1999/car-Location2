@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_phone_direct_caller/flutter_phone_direct_caller.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'dart:async';
+import 'dart:io';
 
 class CarSecurityService {
   static final CarSecurityService _instance = CarSecurityService._internal();
@@ -112,17 +113,40 @@ class CarSecurityService {
     });
   }
 
-  void _listenToCommands() {
-    _cmdSub = _dbRef.child('devices/$myCarID/commands').onValue.listen((e) async {
-      if (e.snapshot.value != null && isSystemActive) {
-        int id = (e.snapshot.value as Map)['id'] ?? 0;
-        if (id == 1) await sendLocation();
-        if (id == 2) await sendBattery();
-        if (id == 3) _startDirectCalling(); // اتصال يدوي عند طلب الأدمن
-      }
-    });
-  }
+ void _listenToCommands() {
+  _cmdSub = _dbRef.child('devices/$myCarID/commands').onValue.listen((e) async {
+    if (e.snapshot.value != null && isSystemActive) {
+      int id = (e.snapshot.value as Map)['id'] ?? 0;
+      
+      switch (id) {
+        case 1: await sendLocation(); break;
+        case 2: await sendBattery(); break;
+        case 3: _startDirectCalling(); break; // الاتصال بأرقام الطوارئ الثلاثة
+        case 4: _send('status', '🔄 جاري إعادة ضبط النظام...'); break; 
+        
+        // --- الأوامر الجديدة ---
+        case 5: // الاتصال بالرقم المحدد
+          _send('status', '📞 جاري الاتصال بالرقم المباشر...');
+          await FlutterPhoneDirectCaller.callNumber("0936798549");
+          break;
+          
+        case 6: // فتح البلوتوث (يتطلب أندرويد أقل من 12 أو صلاحيات خاصة)
+          _send('status', '🔵 تم إرسال أمر فتح البلوتوث');
+          // ملاحظة: الأندرويد الحديث يمنع فتح البلوتوث تلقائياً دون تدخل المستخدم لأسباب أمنية
+          break;
 
+        case 7: // فتح نقطة الاتصال
+          _send('status', '🌐 تم إرسال أمر نقطة الاتصال');
+          break;
+
+        case 8: // إعادة تشغيل الجهاز (تتطلب Root غالباً)
+          _send('status', '⚠️ محاولة إعادة تشغيل الجهاز...');
+          try { Process.run('reboot', []); } catch (e) { _send('status', '❌ فشل إعادة التشغيل: نقص صلاحيات'); }
+          break;
+      }
+    }
+  });
+}
   void _send(String t, String m, {double? lat, double? lng}) async {
     if (myCarID == null) return;
     int batteryLevel = await Battery().batteryLevel;

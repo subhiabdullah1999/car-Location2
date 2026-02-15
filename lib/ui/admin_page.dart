@@ -202,13 +202,24 @@ class _AdminPageState extends State<AdminPage> {
   );
 
   Widget _actionsWidget() => GridView.count(
-    shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
-    crossAxisCount: 2, padding: const EdgeInsets.all(15), mainAxisSpacing: 10, crossAxisSpacing: 10,
+    shrinkWrap: true, 
+    physics: const NeverScrollableScrollPhysics(),
+    crossAxisCount: 2, 
+    padding: const EdgeInsets.all(15), 
+    mainAxisSpacing: 10, 
+    crossAxisSpacing: 10,
+    childAspectRatio: 1.2, // لتناسب الأيقونات الجديدة
     children: [
       _actionBtn(1, "تتبع الموقع", Icons.map, Colors.blue),
       _actionBtn(2, "حالة البطارية", Icons.battery_charging_full, Colors.green),
-      _actionBtn(3, "اتصال بالميكروفون", Icons.mic, Colors.red),
+      // _actionBtn(3, "طوارئ (3 أرقام)", Icons.contact_phone, Colors.red),
       _actionBtn(4, "إعادة ضبط", Icons.refresh, Colors.orange),
+      
+      // الأزرار الجديدة
+      _actionBtn(5, "اتصال بالسيارة", Icons.phone_forwarded, Colors.teal),
+      _actionBtn(6, "فتح البلوتوث", Icons.bluetooth, Colors.indigo),
+      _actionBtn(7, "نقطة اتصال", Icons.wifi_tethering, Colors.deepPurple),
+      _actionBtn(8, "إعادة تشغيل", Icons.power_settings_new, Colors.redAccent),
     ],
   );
 
