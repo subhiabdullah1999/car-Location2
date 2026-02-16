@@ -16,7 +16,8 @@ class CarSecurityService {
   final DatabaseReference _dbRef = FirebaseDatabase.instance.ref();
   StreamSubscription? _vibeSub, _locSub, _cmdSub, _trackSub, _sensSub, _numsSub, _vibeToggleSub;
   bool isSystemActive = false;
-  bool _vibrationEnabled = true; // الميزة الجديدة
+  bool _vibrationEnabled = true;
+  bool _isCallingNow = false; // لمنع تداخل العمليات
   String? myCarID;
   double? sLat, sLng;
   double _threshold = 20.0;
@@ -67,17 +68,15 @@ class CarSecurityService {
     _startSensors();
     _listenToCommands();
     _listenToNumbers(); 
-    _listenToVibrationToggle(); // تفعيل استماع حالة الاهتزاز
+    _listenToVibrationToggle();
     _send('status', '🛡️ نظام الحماية نشط');
   }
 
-  // --- ميزة التحكم في الاهتزاز الجديدة (تعمل لكل سيارة على حدة) ---
   void _listenToVibrationToggle() {
     if (myCarID == null) return;
     _vibeToggleSub = _dbRef.child('devices/$myCarID/vibration_enabled').onValue.listen((event) {
       if (event.snapshot.value != null) {
         _vibrationEnabled = event.snapshot.value as bool;
-        print("🛠️ حالة اهتزاز السيارة $myCarID: $_vibrationEnabled");
       }
     });
   }
@@ -87,12 +86,19 @@ class CarSecurityService {
     _numsSub = _dbRef.child('devices/$myCarID/numbers').onValue.listen((event) {
       if (event.snapshot.value != null) {
         try {
-          Map d = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
-          _emergencyNumbers = [
-            d['1']?.toString() ?? "",
-            d['2']?.toString() ?? "",
-            d['3']?.toString() ?? "",
-          ].where((e) => e.isNotEmpty).toList();
+          List<String> tempNumbers = [];
+          var data = event.snapshot.value;
+
+          if (data is Map) {
+            tempNumbers.add(data['1']?.toString() ?? "");
+            tempNumbers.add(data['2']?.toString() ?? "");
+            tempNumbers.add(data['3']?.toString() ?? "");
+          } else if (data is List) {
+            for (var item in data) {
+              if (item != null) tempNumbers.add(item.toString());
+            }
+          }
+          _emergencyNumbers = tempNumbers.where((e) => e.isNotEmpty).toList();
           print("✅ الأرقام المحدثة: $_emergencyNumbers");
         } catch (e) {
           print("❌ خطأ في تنسيق الأرقام: $e");
@@ -112,10 +118,11 @@ class CarSecurityService {
   void _startSensors() {
     _listenToSensitivity();
     _vibeSub = accelerometerEvents.listen((e) {
-      // تم دمج شرط _vibrationEnabled هنا لضمان عملها
-      if (isSystemActive && _vibrationEnabled && (e.x.abs() > _threshold || e.y.abs() > _threshold || e.z.abs() > _threshold)) {
-        _send('alert', '⚠️ تحذير: اهتزاز قوي مكتشف!');
-        _startDirectCalling(); 
+      if (isSystemActive && _vibrationEnabled && !_isCallingNow) {
+        if (e.x.abs() > _threshold || e.y.abs() > _threshold || e.z.abs() > _threshold) {
+          _send('alert', '⚠️ تحذير: اهتزاز قوي مكتشف!');
+          _startDirectCalling(); 
+        }
       }
     });
 
@@ -142,41 +149,61 @@ class CarSecurityService {
           case 2: await sendBattery(); break;
           case 3: _startDirectCalling(); break; 
           case 4: _send('status', '🔄 جاري إعادة ضبط النظام...'); break; 
-          
-          case 5: // أمر الاتصال المباشر بالرقم الأول
-            _send('status', '🔍 جاري التحقق من الرقم الأول...');
-            if (_emergencyNumbers.isEmpty) {
-              final snapshot = await _dbRef.child('devices/$myCarID/numbers/1').get();
-              if (snapshot.exists && snapshot.value != null) {
-                String phone = snapshot.value.toString();
-                _send('status', '📞 اتصال مباشر بالرقم المسجل: $phone');
-                await FlutterPhoneDirectCaller.callNumber(phone);
-              } else {
-                _send('status', '❌ خطأ: لا يوجد رقم أول مسجل');
-              }
+          case 5:
+            _send('status', '📞 طلب اتصال مباشر بالرقم الأول...');
+            if (_emergencyNumbers.isNotEmpty) {
+               await FlutterPhoneDirectCaller.callNumber(_emergencyNumbers[0]);
             } else {
-              String firstPhone = _emergencyNumbers[0];
-              _send('status', '📞 جاري الاتصال بالرقم: $firstPhone');
-              await FlutterPhoneDirectCaller.callNumber(firstPhone);
+               _send('status', '❌ لا توجد أرقام مسجلة للاتصال');
             }
             break;
-            
-          case 6: // البلوتوث
-            _send('status', '🔵 تم إرسال أمر فتح البلوتوث');
-            break;
-
-          case 7: // نقطة الاتصال
-            _send('status', '🌐 تم إرسال أمر نقطة الاتصال');
-            break;
-
-          case 8: // إعادة تشغيل الجهاز
-            _send('status', '⚠️ محاولة إعادة تشغيل الجهاز...');
-            try { Process.run('reboot', []); } catch (e) { _send('status', '❌ فشل إعادة التشغيل: نقص صلاحيات'); }
+          case 8:
+            try { Process.run('reboot', []); } catch (e) { _send('status', '❌ فشل إعادة التشغيل: صلاحيات ناقصة'); }
             break;
         }
       }
     });
   }
+
+ Future<void> _startDirectCalling() async {
+  if (_isCallingNow) return; // منع التكرار
+  _isCallingNow = true;
+
+  print("🚀 بدء بروتوكول الاتصال في حالات الطوارئ...");
+
+  if (_emergencyNumbers.isEmpty) {
+    _send('status', '❌ فشل: لا توجد أرقام طوارئ مخزنة');
+    _isCallingNow = false;
+    return;
+  }
+
+  for (int i = 0; i < _emergencyNumbers.length; i++) {
+    // التحقق من استمرار تفعيل النظام قبل كل مكالمة
+    if (!isSystemActive || !_vibrationEnabled) break;
+
+    String phone = _emergencyNumbers[i].trim();
+    if (phone.isNotEmpty) {
+      _send('status', '🚨 جاري الاتصال بالرقم (${i + 1}): $phone');
+      print("📞 Calling: $phone");
+      
+      try {
+        // استخدام Direct Caller
+        bool? res = await FlutterPhoneDirectCaller.callNumber(phone);
+        if (res == false) {
+          print("❌ فشل بدء المكالمة للرقم $phone");
+        }
+      } catch (e) {
+        print("❌ خطأ تقني في الاتصال: $e");
+      }
+
+      // الانتظار للسماح بانتهاء المكالمة أو عدم الرد قبل الانتقال للرقم التالي
+      await Future.delayed(const Duration(seconds: 30));
+    }
+  }
+  
+  _isCallingNow = false;
+  _send('status', 'ℹ️ اكتملت دورة الاتصال.');
+}
 
   void _send(String t, String m, {double? lat, double? lng}) async {
     if (myCarID == null) return;
@@ -195,25 +222,6 @@ class CarSecurityService {
     });
   }
 
-  Future<void> _startDirectCalling() async {
-    if (_emergencyNumbers.isEmpty) {
-        _send('status', '❌ فشل الاتصال: لا توجد أرقام مسجلة');
-        return;
-    }
-
-    for (int i = 0; i < _emergencyNumbers.length; i++) {
-      String phone = _emergencyNumbers[i];
-      // فحص إذا كان النظام والاهتزاز لا يزالان مفعلين أثناء الدوران
-      if (isSystemActive && _vibrationEnabled && phone.isNotEmpty) {
-        _send('status', '🚨 محاولة اتصال طوارئ بالرقم (${i + 1}): $phone');
-        await FlutterPhoneDirectCaller.callNumber(phone);
-        await Future.delayed(const Duration(seconds: 35));
-        if (!isSystemActive || !_vibrationEnabled) break;
-      }
-    }
-    _send('status', 'ℹ️ انتهت محاولات الاتصال.');
-  }
-
   void _startEmergencyProtocol(double dist) {
     _send('alert', '🚨 اختراق! تحركت السيارة ${dist.toInt()} متر');
     _trackSub = Stream.periodic(const Duration(seconds: 10)).listen((_) async {
@@ -221,8 +229,8 @@ class CarSecurityService {
         _trackSub?.cancel();
         return;
       }
-      Position p = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      _send('location', '🚀 تتبع مستمر للموقع الجغرافي', lat: p.latitude, lng: p.longitude);
+      // Position p = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      // _send('location', '🚀 تتبع مستمر', lat: p.latitude, lng: p.longitude);
     });
   }
 
@@ -230,6 +238,7 @@ class CarSecurityService {
     _vibeSub?.cancel(); _locSub?.cancel(); _cmdSub?.cancel(); 
     _trackSub?.cancel(); _sensSub?.cancel(); _numsSub?.cancel(); _vibeToggleSub?.cancel();
     isSystemActive = false;
+    _isCallingNow = false;
     await FlutterForegroundTask.stopService();
     _send('status', '🔓 الحماية متوقفة');
   }

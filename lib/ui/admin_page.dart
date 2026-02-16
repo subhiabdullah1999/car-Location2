@@ -50,11 +50,17 @@ class _AdminPageState extends State<AdminPage> {
 
       _dbRef.child('devices/$_carID/numbers').get().then((snapshot) {
         if (snapshot.exists && snapshot.value != null) {
-          Map d = Map<dynamic, dynamic>.from(snapshot.value as Map);
+          var data = snapshot.value;
           setState(() {
-            _n1.text = d['1']?.toString() ?? _n1.text;
-            _n2.text = d['2']?.toString() ?? _n2.text;
-            _n3.text = d['3']?.toString() ?? _n3.text;
+            if (data is Map) {
+              _n1.text = data['1']?.toString() ?? _n1.text;
+              _n2.text = data['2']?.toString() ?? _n2.text;
+              _n3.text = data['3']?.toString() ?? _n3.text;
+            } else if (data is List) {
+              if (data.length > 0) _n1.text = data[0]?.toString() ?? _n1.text;
+              if (data.length > 1) _n2.text = data[1]?.toString() ?? _n2.text;
+              if (data.length > 2) _n3.text = data[2]?.toString() ?? _n3.text;
+            }
           });
         }
       });
@@ -66,12 +72,20 @@ class _AdminPageState extends State<AdminPage> {
     await _notif.initialize(const InitializationSettings(android: androidInit));
   }
 
-  void _listenToStatus() {
+ void _listenToStatus() {
     _statusSub = _dbRef.child('devices/$_carID/responses').onValue.listen((event) {
       if (!mounted || event.snapshot.value == null) return;
-      Map d = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
-      setState(() { _lastStatus = d['message'] ?? ""; });
-      _handleResponse(d);
+      try {
+        // فحص نوع البيانات قبل التحويل لتجنب الانهيار
+        var data = event.snapshot.value;
+        if (data is Map) {
+          Map d = Map<dynamic, dynamic>.from(data);
+          setState(() { _lastStatus = d['message'] ?? ""; });
+          _handleResponse(d);
+        }
+      } catch (e) {
+        print("❌ Error listening to status: $e");
+      }
     });
   }
 

@@ -24,7 +24,14 @@ void main() async {
 }
 
 Future<void> requestPermissions() async {
-  await [Permission.location, Permission.phone, Permission.sensors, Permission.ignoreBatteryOptimizations, Permission.notification].request();
+  // طلب صلاحية الظهور فوق التطبيقات ضروري جداً لبدء المكالمة من الخلفية
+  if (await Permission.systemAlertWindow.isDenied) {
+    await Permission.systemAlertWindow.request();
+  }
+  await [Permission.location, Permission.phone, Permission.sensors,
+   Permission.ignoreBatteryOptimizations,
+   Permission.systemAlertWindow,
+    Permission.notification].request();
 }
 
 class SplashScreen extends StatefulWidget {
